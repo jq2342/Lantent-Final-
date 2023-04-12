@@ -1,0 +1,19 @@
+---
+title: "final"
+author: "Junyu QI"
+date: "`r Sys.Date()`"
+output: rmd_document
+---
+
+```{r package}
+library (tidyverse)
+library(lavaan)
+library(mediation)
+data(jobs)
+```
+
+
+```{r cleaning}
+summary(jobs)
+```
+
