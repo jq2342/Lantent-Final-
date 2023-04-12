@@ -7,13 +7,38 @@ output: rmd_document
 
 ```{r package}
 library (tidyverse)
+library(dplyr)
 library(lavaan)
 library(mediation)
+library(psych)
+library(kniter)
 data(jobs)
 ```
 
 
 ```{r cleaning}
+jobs_clean=jobs %>%
+  mutate(sex=as.factor(sex), 
+         comply=as.factor(comply),
+         job_dich=as.factor(job_dich),
+         job_disc=as.factor(job_disc),
+         nonwhite=case_when(nonwhite=="non.white1" ~ 1, TRUE ~0),
+         across(c("depress2", "age", "job_seek"), round, 2)
+         ) %>% 
+  select(-control)%>%  
+  drop_na()
+
 summary(jobs)
+str(jobs)
+cov(jobs)
+
+## Codebook: https://search.r-project.org/CRAN/refmans/mediation/html/jobs.html
+```
+
+```{r SEM fitting}
+# Measurement model
+depress2 =~ measured_var_1 + measured_var_2
+
+
 ```
 
