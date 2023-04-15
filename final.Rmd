@@ -6,30 +6,113 @@ output: rmd_document
 ---
 
 ```{r package}
-library (tidyverse)
-library(lavaan)
+library(tidyverse)
 library(mediation)
-library(psych)
-library(caret)
-library(rpart.plot)
+library(janitor)
+library(magrittr)
+library(ggpubr)
+library(ggridges)
+library(dagitty)
+library(tableone)
 data(jobs)
 ```
 
 
 ```{r cleaning}
-jobs=jobs %>%
-  mutate(sex=as.factor(sex), 
-         comply=as.factor(comply),
-         job_dich=as.factor(job_dich),
-         job_disc=as.factor(job_disc),
-         nonwhite=case_when(nonwhite=="non.white1" ~ 1, TRUE ~0),
-         across(c("depress2", "age", "job_seek"), round, 2)) 
-
-summary(jobs)
-str(jobs)
+jobs_clean = jobs %>% 
+  mutate(
+    treat = as.factor(treat),
+    sex = as.factor(if_else(sex == 1, "F", "M")),
+    income = gsub("t", "-", income),
+    income=as.factor(income),
+    nonwhite = as.factor(case_when(nonwhite == "non.white1" ~ 1, TRUE ~ 0)),
+    work1 = as.factor(case_when(work1 == "psyemp" ~ 1, TRUE ~ 0)),
+    comply = as.factor(comply),
+    job_dich = as.factor(job_dich),
+    job_disc = as.factor(job_disc),
+    depression_change_outcome = depress2 - depress1
+  ) %>% 
+  rename(
+    "depression_pretreat" = "depress1",
+    "job_seek_mediator" = "job_seek",
+    "depression_posttreat" = "depress2",
+    "employed" = "work1",
+    "job_seek_dich" = "job_dich",
+    "job_seek_cat" = "job_disc"
+  ) %>% 
+  dplyr::select(-control) %>% 
+  dplyr::select(treat, comply, job_seek_mediator, depression_change_outcome, employed, everything())
 
 ## Codebook: https://search.r-project.org/CRAN/refmans/mediation/html/jobs.html
 ```
+
+
+```{r testing comply as confounder}
+# Association between treatment and comply
+# frequency table- 62% in treatment treatment complied
+jobs_clean %>%
+  count(treat, comply) %>%
+  group_by(treat) %>%           
+  mutate(prop = prop.table(n))
+
+# Association between depression score change and comply
+# visual inspection -those who did not comply has a smaller negative change in depression score change
+ggplot(jobs_clean, aes(y = depression_change_outcome, x = comply))+
+      geom_violin( alpha = .5) + 
+stat_summary(fun = c("median"), color = "blue")
+# Statistical analysis -- correlation coefficient=-0.0893 not correlated
+fit = lm(depression_change_outcome~comply , data = jobs_clean)
+summary(fit)
+coef(fit)
+```
+
+```{r choosing exposure---treatment}
+
+# DAG
+exposure_treat = dagitty('dag {
+    treatment [pos="0,1"]
+    depression_change [pos="1,1"]
+    job_seek [pos="0.5,0.5"]
+    treatment -> depression_change
+    treatment-> job_seek-> depression_change
+}')
+plot(exposure_treat)
+
+# Testing the distribution of Characteristics in two groups to confirm no potential confounding
+##insignificant p-value, no confounding
+charvar=c("employed", "occp", "econ_hard", "sex","age","marital", "nonwhite","educ", "income")
+catvar=c("employed", "occp", "sex","marital", "nonwhite","educ", "income")
+table1= CreateTableOne(vars = charvar, strata = "treat" , data = jobs_clean, factorVars = catvar)
+print(table1,  formatOptions = list(big.mark = ",") )
+
+
+# Mediation analysis using mediation package
+## mediation effect w/o interaction: -0.00697 p-value=0.20
+## mediation effect w interaction: -0.00728 p-value=0.22
+mediation_model <- lm(job_seek_mediator ~ treat, data = jobs_clean)
+causal_model <- lm(depression_change_outcome ~ treat + job_seek_mediator, data = jobs_clean)
+interaction_model <- lm(depression_change_outcome ~ treat + job_seek_mediator +treat:job_seek_mediator, data = jobs_clean)
+
+out.1 <- mediate(mediation_model, causal_model, sims = 1000, boot = TRUE, treat = "treat",
+                    mediator = "job_seek_mediator")
+out.2 <- mediate(mediation_model, causal_model, sims = 1000, treat = "treat",
+                    mediator = "job_seek_mediator")
+out.3 <- mediate(mediation_model, interaction_model, sims = 1000, treat = "treat",
+                    mediator = "job_seek_mediator")
+
+summary(out.2)
+plot(out.2)
+summary(out.3)
+plot(out.3)
+```
+
+```{r choosing exposure ---comply}
+# Propensity score estimation
+
+```
+
+
+
 
 ```{r partition}
 set.seed(123)
@@ -38,15 +121,32 @@ train.data<-jobs[train.indices, ]
 test.data<-jobs[-train.indices, ]
 ```
 
-```{r Classificayion Tree Analysis}
-##Outcome :depress2
+```{r Regression Tree Analysis}
+##Outcome :depress_diff
+tree=rpart (depress_diff~ treat+job_seek+sex+age+nonwhite, data=jobs, control=rpart.control(cp=0.0001))
+printcp(tree)
+
+best= tree$cptable[which.min(tree$cptable[,"xerror"]),"CP"]
+pruned_tree <- prune(tree, cp=best)
+prp(pruned_tree,
+    faclen=0,
+    extra=1,
+    roundint=F,
+    digits=5) 
+
+```
+
+```{r}
+jobs %>%
+  group_by(treat, comply)
+
 
 set.seed(123)
 train.control<-trainControl(method="cv", number=10)
 
 grid.singletree<-expand.grid(cp=seq(0.0005, 0.02, by =0.001))
 
-tree.jobs<-train(depress2~., data=jobs, method="rpart",trControl=train.control, tuneGrid=grid.singletree)
+tree.jobs<-train(depress_diff~ treat, data=jobs, method="rpart",trControl=train.control, tuneGrid=grid.singletree)
 
 tree.jobs$bestTune
 
@@ -56,9 +156,6 @@ varImp(tree.jobs)
 
 rpart.plot(tree.jobs$finalModel)
 
-
 tree.jobs$results
-
-
 ```
 
