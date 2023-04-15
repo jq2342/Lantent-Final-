@@ -7,37 +7,57 @@ output: rmd_document
 
 ```{r package}
 library (tidyverse)
-library(dplyr)
 library(lavaan)
 library(mediation)
 library(psych)
-library(kniter)
+library(caret)
+library(rpart.plot)
 data(jobs)
 ```
 
 
 ```{r cleaning}
-jobs_clean=jobs %>%
+jobs=jobs %>%
   mutate(sex=as.factor(sex), 
          comply=as.factor(comply),
          job_dich=as.factor(job_dich),
          job_disc=as.factor(job_disc),
          nonwhite=case_when(nonwhite=="non.white1" ~ 1, TRUE ~0),
-         across(c("depress2", "age", "job_seek"), round, 2)
-         ) %>% 
-  select(-control)%>%  
-  drop_na()
+         across(c("depress2", "age", "job_seek"), round, 2)) 
 
 summary(jobs)
 str(jobs)
-cov(jobs)
 
 ## Codebook: https://search.r-project.org/CRAN/refmans/mediation/html/jobs.html
 ```
 
-```{r SEM fitting}
-# Measurement model
-depress2 =~ measured_var_1 + measured_var_2
+```{r partition}
+set.seed(123)
+train.indices=createDataPartition(y=jobs$depress2,p=0.7,list=FALSE)
+train.data<-jobs[train.indices, ]
+test.data<-jobs[-train.indices, ]
+```
+
+```{r Classificayion Tree Analysis}
+##Outcome :depress2
+
+set.seed(123)
+train.control<-trainControl(method="cv", number=10)
+
+grid.singletree<-expand.grid(cp=seq(0.0005, 0.02, by =0.001))
+
+tree.jobs<-train(depress2~., data=jobs, method="rpart",trControl=train.control, tuneGrid=grid.singletree)
+
+tree.jobs$bestTune
+
+tree.jobs
+
+varImp(tree.jobs)
+
+rpart.plot(tree.jobs$finalModel)
+
+
+tree.jobs$results
 
 
 ```
